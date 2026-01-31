@@ -112,6 +112,26 @@ class StreamManager:
                                 "payload": self.current_answer_buffer
                             }))
 
+            elif msg_type == "transcript_client":
+                text = message.get("payload")
+                log_debug(f"Received Client Transcript: {text}")
+                
+                if text:
+                    context_engine.update_transcript(text)
+                    
+                    if self.state == InterviewState.AWAITING_ANSWER:
+                        self.current_answer_buffer += " " + text
+                    
+                    # Voice Trigger for "Done"
+                    trigger_phrases = ["done with", "next question", "finished answer", "that's my answer"]
+                    if any(phrase in text.lower() for phrase in trigger_phrases):
+                        log_debug(f"Voice Trigger Detected (Client): {text}")
+                        # Mimic submit_answer payload
+                        await self.process_message(websocket, json.dumps({
+                            "type": "submit_answer", 
+                            "payload": self.current_answer_buffer
+                        }))
+
             elif msg_type == "video":
                 self.frame_count += 1
                 # Process every 3 frames (approx 3 seconds) -> faster feedback

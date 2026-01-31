@@ -165,69 +165,66 @@ const MediaCapture: React.FC<MediaCaptureProps> = ({ onStatusChange }) => {
         }
     };
 
+    const recognitionRef = useRef<any>(null);
+
     const startAudioStreaming = (stream: MediaStream) => {
-        isRecordingRef.current = true;
-        const options = { mimeType: 'audio/webm' };
+        // Stop any existing tracks (we don't need audio stream for Web Speech API, but good to keep mic active for indicator)
+        // Actually, Web Speech API handles its own mic access.
 
-        // VAD Setup
-        const audioContext = new AudioContext();
-        const source = audioContext.createMediaStreamSource(stream);
-        const analyser = audioContext.createAnalyser();
-        analyser.fftSize = 256;
-        source.connect(analyser);
-        const bufferLength = analyser.frequencyBinCount;
-        const dataArray = new Uint8Array(bufferLength);
-        let hasSpeech = false;
-        const SPEECH_THRESHOLD = 20;
+        if (!('webkitSpeechRecognition' in window)) {
+            console.error("Browser does not support Speech Recognition");
+            alert("Your browser does not support Speech Recognition. Please use Chrome/Edge.");
+            return;
+        }
 
-        const checkVolume = () => {
-            if (!isRecordingRef.current) return;
-            analyser.getByteFrequencyData(dataArray);
-            const volume = dataArray.reduce((src, a) => src + a, 0) / bufferLength;
-            if (volume > SPEECH_THRESHOLD) hasSpeech = true;
-            requestAnimationFrame(checkVolume);
-        };
-        checkVolume();
+        const SpeechRecognition = (window as any).webkitSpeechRecognition;
+        const recognition = new SpeechRecognition();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = 'en-US';
 
-        const recordSegment = () => {
-            if (!isRecordingRef.current) {
-                audioContext.close();
-                return;
+        recognition.onresult = (event: any) => {
+            let finalTranscript = '';
+            let interimTranscript = '';
+
+            for (let i = event.resultIndex; i < event.results.length; ++i) {
+                if (event.results[i].isFinal) {
+                    finalTranscript += event.results[i][0].transcript;
+                } else {
+                    interimTranscript += event.results[i][0].transcript;
+                }
             }
-            try {
-                hasSpeech = false;
-                const recorder = new MediaRecorder(stream, options);
-                const chunks: Blob[] = [];
 
-                recorder.ondataavailable = (e) => {
-                    if (e.data.size > 0) chunks.push(e.data);
-                };
+            if (finalTranscript) {
+                console.log("Final Transcript:", finalTranscript);
+                // Send to backend
+                if (socketRef.current?.readyState === WebSocket.OPEN) {
+                    socketRef.current.send(JSON.stringify({
+                        type: 'transcript_client',
+                        payload: finalTranscript,
+                        timestamp: Date.now()
+                    }));
+                }
 
-                recorder.onstop = () => {
-                    const blob = new Blob(chunks, { type: 'audio/webm' });
-                    if (hasSpeech && blob.size > 0 && socketRef.current?.readyState === WebSocket.OPEN) {
-                        const reader = new FileReader();
-                        reader.onloadend = () => {
-                            const base64data = reader.result as string;
-                            socketRef.current?.send(JSON.stringify({ type: 'audio', payload: base64data, timestamp: Date.now() }));
-                        };
-                        reader.readAsDataURL(blob);
-                    }
-                    if (isRecordingRef.current) recordSegment();
-                };
-
-                recorder.start();
-                audioRecorderRef.current = recorder;
-                setTimeout(() => {
-                    if (recorder.state === "recording") recorder.stop();
-                }, 1500);
-            } catch (e) {
-                console.error(e);
-                isRecordingRef.current = false;
-                audioContext.close();
+                // Update Local Log immediately
+                const timeStr = formatTime(sessionStartTime ? Math.floor((Date.now() - sessionStartTime) / 1000) : 0);
+                setTranscriptLog(prev => [...prev, { time: timeStr, text: finalTranscript, type: 'audio' }]);
             }
         };
-        recordSegment();
+
+        recognition.onerror = (event: any) => {
+            console.error("Speech Recognition Error", event.error);
+        };
+
+        recognition.onend = () => {
+            if (isCapturing) {
+                console.log("Restarting Recognition...");
+                try { recognition.start(); } catch (e) { /* ignore */ }
+            }
+        };
+
+        recognition.start();
+        recognitionRef.current = recognition;
     };
 
     const startFrameExtraction = (videoTrack: MediaStreamTrack) => {
@@ -251,13 +248,21 @@ const MediaCapture: React.FC<MediaCaptureProps> = ({ onStatusChange }) => {
     };
 
     const stopCapture = () => {
-        window.speechSynthesis.cancel(); // Stop speaking immediately
+        window.speechSynthesis.cancel();
         isRecordingRef.current = false;
+
         if (socketRef.current?.readyState === WebSocket.OPEN) {
             socketRef.current.send(JSON.stringify({ type: 'end_session' }));
         }
+
         if (mediaStreamRef.current) mediaStreamRef.current.getTracks().forEach(track => track.stop());
-        if (audioRecorderRef.current && audioRecorderRef.current.state !== "inactive") audioRecorderRef.current.stop();
+
+        // Stop Speech Recognition
+        if (recognitionRef.current) {
+            try { recognitionRef.current.stop(); } catch (e) { /* ignore */ }
+            recognitionRef.current = null;
+        }
+
         if (intervalRef.current) clearInterval(intervalRef.current);
         setIsCapturing(false);
         onStatusChange?.('Stopped. Generating Report...');
