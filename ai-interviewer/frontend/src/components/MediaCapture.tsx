@@ -17,6 +17,7 @@ const MediaCapture: React.FC<MediaCaptureProps> = ({ onStatusChange }) => {
         image?: string; // Base64 image for visual logs
     }
     const [transcriptLog, setTranscriptLog] = useState<TranscriptEntry[]>([]);
+    const [visualLog, setVisualLog] = useState<TranscriptEntry[]>([]);
     const [viewMode, setViewMode] = useState<'transcript' | 'visuals'>('transcript');
 
     const videoRef = useRef<HTMLVideoElement>(null);
@@ -72,7 +73,12 @@ const MediaCapture: React.FC<MediaCaptureProps> = ({ onStatusChange }) => {
                     const now = Date.now();
                     const elapsed = sessionStartTime ? Math.floor((now - sessionStartTime) / 1000) : 0;
                     const timeStr = formatTime(elapsed);
-                    setTranscriptLog(prev => [...prev, { time: timeStr, text: data.text, type: 'visual', image: data.image }]);
+                } else if (data.type === 'visual_log') {
+                    const now = Date.now();
+                    const elapsed = sessionStartTime ? Math.floor((now - sessionStartTime) / 1000) : 0;
+                    const timeStr = formatTime(elapsed);
+                    setVisualLog(prev => [...prev, { time: timeStr, text: data.text, type: 'visual', image: data.image }]);
+                    // Do NOT add to transcriptLog
 
                 } else if (data.type === 'evaluation') {
                     // Speak the feedback to "reply" to the user
@@ -107,6 +113,7 @@ const MediaCapture: React.FC<MediaCaptureProps> = ({ onStatusChange }) => {
     const startCapture = async () => {
         setReport(null);
         setTranscriptLog([]);
+        setVisualLog([]);
         setCurrentQuestion(null);
         setSessionStartTime(Date.now());
 
@@ -382,7 +389,7 @@ const MediaCapture: React.FC<MediaCaptureProps> = ({ onStatusChange }) => {
                             </div>
                         ))
                     ) : (
-                        <VisualGallery entries={transcriptLog.filter(e => e.type === 'visual' && e.image)} />
+                        <VisualGallery entries={visualLog} />
                     )}
                     <div style={{ float: "left", clear: "both" }} ></div>
                 </div>
@@ -408,67 +415,61 @@ const MediaCapture: React.FC<MediaCaptureProps> = ({ onStatusChange }) => {
     );
 };
 
-// Sub-component for Visual Gallery slider
+// Sub-component for Visual Gallery (Grid View)
 const VisualGallery: React.FC<{ entries: any[] }> = ({ entries }) => {
-    const [currentIndex, setCurrentIndex] = useState(0);
+    const [selectedEntry, setSelectedEntry] = useState<any | null>(null);
 
     if (entries.length === 0) {
         return <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)' }}>No visuals captured yet.</div>;
     }
 
-    const currentEntry = entries[currentIndex];
-
-    // Safety check
-    if (!currentEntry) return null;
-
-    const nextSlide = () => {
-        if (currentIndex < entries.length - 1) setCurrentIndex(prev => prev + 1);
-    };
-
-    const prevSlide = () => {
-        if (currentIndex > 0) setCurrentIndex(prev => prev - 1);
-    };
-
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', height: '100%', alignItems: 'center' }}>
-            <div style={{
-                flex: 1, width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center',
-                background: 'rgba(0,0,0,0.3)', borderRadius: '8px', overflow: 'hidden', marginBottom: '20px',
-                border: '1px solid var(--border-color)', minHeight: '200px'
-            }}>
-                <img
-                    src={currentEntry.image}
-                    alt="Screen Snapshot"
-                    style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
-                />
+        <div style={{ padding: '10px' }}>
+            {/* Grid View */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '15px' }}>
+                {entries.map((entry, idx) => (
+                    <div key={idx}
+                        onClick={() => setSelectedEntry(entry)}
+                        className="animate-fade-in"
+                        style={{
+                            cursor: 'pointer', border: '1px solid var(--border-color)', borderRadius: '8px',
+                            overflow: 'hidden', background: 'rgba(255,255,255,0.05)', transition: 'transform 0.2s'
+                        }}
+                    >
+                        <div style={{ height: '100px', width: '100%', overflow: 'hidden', background: '#000' }}>
+                            <img src={entry.image} alt="Frame" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        </div>
+                        <div style={{ padding: '8px', fontSize: '0.75rem', color: 'var(--text-muted)', textAlign: 'center' }}>
+                            {entry.time}
+                        </div>
+                    </div>
+                ))}
             </div>
 
-            <div style={{ width: '100%', marginBottom: '20px', padding: '15px', background: 'rgba(255,255,255,0.03)', borderRadius: '8px' }}>
-                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '5px' }}>[{currentEntry.time}] Analysis</div>
-                <div style={{ fontSize: '0.95rem', lineHeight: '1.5' }}>{currentEntry.text.replace("Visual Context: ", "")}</div>
-            </div>
+            {/* Modal for Full View */}
+            {selectedEntry && (
+                <div style={{
+                    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 200,
+                    background: 'rgba(0,0,0,0.9)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                    padding: '40px'
+                }}>
+                    <button
+                        onClick={() => setSelectedEntry(null)}
+                        style={{ position: 'absolute', top: '20px', right: '30px', background: 'transparent', color: 'white', fontSize: '2rem', border: 'none', cursor: 'pointer' }}
+                    >
+                        &times;
+                    </button>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
-                <button
-                    onClick={prevSlide}
-                    disabled={currentIndex === 0}
-                    className="btn-primary"
-                    style={{ padding: '8px 16px', opacity: currentIndex === 0 ? 0.5 : 1, background: 'transparent', border: '1px solid var(--border-color)' }}
-                >
-                    Previous
-                </button>
-                <span style={{ color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
-                    {currentIndex + 1} / {entries.length}
-                </span>
-                <button
-                    onClick={nextSlide}
-                    disabled={currentIndex === entries.length - 1}
-                    className="btn-primary"
-                    style={{ padding: '8px 16px', opacity: currentIndex === entries.length - 1 ? 0.5 : 1, background: 'transparent', border: '1px solid var(--border-color)' }}
-                >
-                    Next
-                </button>
-            </div>
+                    <div style={{ maxHeight: '70vh', maxWidth: '90vw', marginBottom: '20px', border: '1px solid var(--primary)', borderRadius: '8px', overflow: 'hidden' }}>
+                        <img src={selectedEntry.image} alt="Full Frame" style={{ maxHeight: '70vh', maxWidth: '100%', objectFit: 'contain' }} />
+                    </div>
+
+                    <div className="glass-panel" style={{ maxWidth: '800px', width: '100%', padding: '20px', maxHeight: '150px', overflowY: 'auto' }}>
+                        <div style={{ color: 'var(--primary)', marginBottom: '5px', fontSize: '0.9rem' }}>Analyzed at {selectedEntry.time}</div>
+                        <div style={{ fontSize: '1rem', lineHeight: '1.5' }}>{selectedEntry.text.replace("Visual Context: ", "")}</div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

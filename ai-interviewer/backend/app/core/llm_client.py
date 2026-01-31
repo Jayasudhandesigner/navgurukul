@@ -28,7 +28,7 @@ class LLMClient:
         # OpenRouter Setup (for Vision)
         # Using the key provided by user: sk-or-v1-fe83b6d6...
         # Ideally this should be in os.getenv("OPENROUTER_API_KEY")
-        or_key = "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"
+        or_key = "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"
         self.or_client = AsyncOpenAI(
             api_key=or_key,
             base_url="https://openrouter.ai/api/v1"
@@ -64,7 +64,11 @@ class LLMClient:
         if not self.or_client: return None
         try:
             response = await self.or_client.chat.completions.create(
-                model="allenai/Molmo2-8B",
+                model="google/gemma-3-27b-it:free",
+                extra_headers={
+                    "HTTP-Referer": "http://localhost:5173", 
+                    "X-Title": "AI Interviewer"
+                },
                 messages=[
                     {
                         "role": "user",
